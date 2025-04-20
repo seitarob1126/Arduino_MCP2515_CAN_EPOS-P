@@ -1,3 +1,6 @@
+#これはLinux上でPythonで目標電流(目標トルク)を正弦波状に変化させる計算をした上でArudinoへシリアル通信するプログラム。
+#また左右矢印で周期を増減、上下矢印で振幅を増減できるほか、「q」の入力でモータを停止できるようにした。
+
 import serial
 import time
 import math
@@ -21,24 +24,24 @@ def get_theta_step(period):
 def key_monitor():
     global period, amplitude
     while True:
-        if keyboard.is_pressed('up'):
+        if keyboard.is_pressed('right'):
             period = max(0.1, period - 0.1)
-            print(f"↑ 周期：{period:.2f} 秒")
-            time.sleep(0.2)
-
-        elif keyboard.is_pressed('down'):
-            period += 0.1
-            print(f"↓ 周期：{period:.2f} 秒")
-            time.sleep(0.2)
-
-        elif keyboard.is_pressed('right'):
-            amplitude = min(2000, amplitude + 50)
-            print(f"→ 振幅：{amplitude} mA")
+            print(f"+ 周期：{period:.2f} 秒")
             time.sleep(0.2)
 
         elif keyboard.is_pressed('left'):
+            period += 0.1
+            print(f"- 周期：{period:.2f} 秒")
+            time.sleep(0.2)
+
+        elif keyboard.is_pressed('up'):
+            amplitude = min(2000, amplitude + 50)
+            print(f"+ 振幅：{amplitude} mA")
+            time.sleep(0.2)
+
+        elif keyboard.is_pressed('down'):
             amplitude = max(0, amplitude - 50)
-            print(f"← 振幅：{amplitude} mA")
+            print(f"- 振幅：{amplitude} mA")
             time.sleep(0.2)
 
         # "q"が押されたときにモータを停止させる
