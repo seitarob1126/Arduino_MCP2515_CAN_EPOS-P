@@ -1,3 +1,9 @@
+#これはLinuxからシリアル通信でArduinoへ送られてきた値を、SPI通信でMCP2515に送ることで、MCP2515がEPOS PへCAN通信でコマンドを送るプログラム
+#具体的には、(1)(void loopにて)シリアルで受けとった値を1文字ずつ格納し改行を目印に区切る。2byteサイズにする。
+#(2)(createSDOWriteで)8byteのCANのフレームを作成。
+#(3)(CAN.sendMsgBufで)MCP2515経由でCANフレームを送信。
+#(その他)Control WordやOperation Mode変更は別途、CAN.sendMsgBufで送信。
+
 #include <SPI.h>
 #include <mcp_can.h> //https://github.com/coryjfowler/MCP_CAN_lib
 
