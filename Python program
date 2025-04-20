@@ -1,0 +1,62 @@
+import serial
+import time
+import math
+import threading
+import keyboard
+
+# シリアルポート設定（必要に応じて変更）
+ser = serial.Serial('/dev/ttyUSB0', 115200)
+
+# 初期設定
+theta = 0.0
+period = 1.0      # 周期（秒）
+amplitude = 500   # 振幅（mA）
+dt = 0.01         # データ送信周期（秒）
+
+# 周期から角度ステップを計算
+def get_theta_step(period):
+    return (2 * math.pi * dt) / period
+
+# キー入力の監視スレッド
+def key_monitor():
+    global period, amplitude
+    while True:
+        if keyboard.is_pressed('up'):
+            period = max(0.1, period - 0.1)
+            print(f"↑ 周期：{period:.2f} 秒")
+            time.sleep(0.2)
+
+        elif keyboard.is_pressed('down'):
+            period += 0.1
+            print(f"↓ 周期：{period:.2f} 秒")
+            time.sleep(0.2)
+
+        elif keyboard.is_pressed('right'):
+            amplitude = min(2000, amplitude + 50)
+            print(f"→ 振幅：{amplitude} mA")
+            time.sleep(0.2)
+
+        elif keyboard.is_pressed('left'):
+            amplitude = max(0, amplitude - 50)
+            print(f"← 振幅：{amplitude} mA")
+            time.sleep(0.2)
+
+        # "q"が押されたときにモータを停止させる
+        elif keyboard.is_pressed('q'):
+            print("停止指令: モータを停止します")
+            ser.write(b'q')  # Arduinoに「q」を送信して、停止命令を送る
+            time.sleep(0.2)
+
+# キー入力スレッドを開始
+threading.Thread(target=key_monitor, daemon=True).start()
+
+# メインループ：波形を送信
+while True:
+    theta_step = get_theta_step(period)
+    current = amplitude * math.sin(theta)
+    theta += theta_step
+    if theta > 2 * math.pi:
+        theta -= 2 * math.pi
+
+    ser.write(f"{int(current)}\n".encode())
+    time.sleep(dt)
