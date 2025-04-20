@@ -1,0 +1,107 @@
+#include <SPI.h>
+#include <mcp_can.h> //https://github.com/coryjfowler/MCP_CAN_lib
+
+const int SPI_CS_PIN = 10;  // MCP2515のCSピン
+//VCCは5Vに、SO(MISO)は12に、SI(MOSI)は11に、SCKは13に
+const int CAN_INT_PIN = 2;
+
+MCP_CAN CAN(SPI_CS_PIN);
+
+//SDO送信用関数
+//CANopenのSDO(Service Data Object)書き込みメッセージを作る
+//EPOSに値(速度・モード・電流・トルクなど)を送るCANのフレーム(8byte)を構築
+byte* createSDOWrite(uint16_t index, byte subindex, byte* data, byte len) {
+//index:object dictionaryのindex(2byte), subindex(1byte), data:書き込むデータ, len:書き込むデータの長さ(最大4byte)
+  static byte buf[8];
+  //SDOのデータフレーム(8byte)を確保する(staticなので関数抜けても保持する)
+  buf[0] = 0x2F + ((4 - len) << 2);
+  // SDO Command Specifier（expedited, size indicated）
+  //「4バイト中何バイトを使って、SDO書き込みするか？」という情報を1byte目にいれる
+  buf[1] = index & 0xFF;  //インデックスの下位バイトを格納
+  buf[2] = (index >> 8) & 0xFF;  //インデックスの上位バイトを格納
+  //CANopenでは下位バイトを先に入れるリトルエンディアン形式が使われている
+  buf[3] = subindex;
+  for (int i = 0; i < 4; i++) {
+    buf[4 + i] = (i < len) ? data[i] : 0x00;
+  }  //len byteまでdataの値を入れていく。足りない分は0x00で埋める
+  return buf;
+}
+
+void sendControlword(uint16_t cw) {
+  byte data[2] = { (byte)(cw & 0xFF), (byte)((cw >> 8) & 0xFF) };
+  //制御ワードcwをリトルエンディアン形式で分割
+  //例：cw=0x060Fならばdeta={0x0F, 0x06}
+  CAN.sendMsgBuf(0x601, 0, 8, createSDOWrite(0x6040, 0x00, data, 2));
+  //CANバスに送信。0x601:送信先のCAN ID, 0:標準フレーム, 8:SDOデータ長, 0x6040:ControlwordのIndex
+}
+
+void setOperationMode(int8_t mode) {  //modeは8bitの符号あり整数
+  byte data[1] = { (byte)mode };  // 253 =  Crrent Mode
+  CAN.sendMsgBuf(0x601, 0, 8, createSDOWrite(0x6060, 0x00, data, 1));
+}
+
+void setup() {
+  Serial.begin(115200);
+  // CAN初期化
+  while (CAN_OK != CAN.begin(MCP_ANY, CAN_500KBPS, MCP_8MHZ)) {  //CAN.beginが成功する(=CAN_OK)まで繰り返す
+    Serial.println("CAN init failed, retrying...");
+    delay(100);
+  }
+  Serial.println("CAN init OK");
+  delay(1000);
+  CAN.setMode(MCP_NORMAL);  // ノーマルモードに設定
+
+  //Modes of Operation 電流制御は-3
+  setOperationMode(-3); delay(10);
+
+  //Continuous Current Limit
+  //CAN.sendMsgBuf(0x601, 0, 8, createSDOWrite(0x6410, 0x01, data, 2));
+  //Max Speed
+  //CAN.sendMsgBuf(0x601, 0, 8, createSDOWrite(0x6410, 0x04, data, 2));
+  //Thermal Time Constant Winding
+  //CAN.sendMsgBuf(0x601, 0, 8, createSDOWrite(0x6410, 0x05, data, 2));
+
+  // 初期化シーケンス
+  sendControlword(0x0006); delay(10);  //Shutdown
+  sendControlword(0x000F); delay(10);  //SwitchOn
+}
+
+void loop() {
+  if (Serial.available()) {
+    char c = Serial.read();
+    
+    if (c == 'q') {  // "q"が送信された場合
+      Serial.println("停止命令を受信しました。モータを停止します。");
+      sendControlword(0x0002);  // QuickStop
+    } else {
+
+      //Serialで受けたデータをCANデータとして送る前の準備
+      static char input[16];
+      // inputは受信バッファとして使用される16文字(char型なので文字)分の配列
+      static byte idx = 0;
+      // byte型(8bit)は0～255の整数を扱える。idxはIndexを格納する
+      // シリアルから1行（改行で区切られたデータ）を受信し、そのデータを整数値に変換して16ビット符号付きのトルク値にした後、その値を2バイトに分けてdata配列に格納
+      if (c == '\n') {  //改行が来たら、
+        input[idx] = '\0';  //文字列終端を入れる
+        idx = 0;  //idxを0にリセット
+        // 整数値として解釈（mA単位）
+        int current_mA = atoi(input);  //atoi(input)はinput配列に格納されている文字を整数に変換する
+        int16_t torque = (int16_t)current_mA;  // EPOSではTarget Torqueは16bit符号付き https://doku.amk-motion.com/en/Subsystems/PDK_206016_DS402_Standard_en/Content/Projekt/Interfaces/PDK_206016_DS402_Standard/Objekte/0x6071.htm?utm_source=chatgpt.com
+        byte data[2] = {
+          (byte)(torque & 0xFF),  //data[0]に格納
+          (byte)((torque >> 8) & 0xFF)  //data[1]に格納
+        };
+
+        //ここからCANで送るための操作をする
+        byte* canData = createSDOWrite(0x2030, 0x00, data, 2);
+        CAN.sendMsgBuf(0x601, 0, 8, canData);
+        // デバッグ表示
+        Serial.print("Sent torque command: ");
+        Serial.println(torque);
+      }
+      else if (idx < sizeof(input) - 1) {
+        input[idx++] = c;  // inputに1文字ずつ追加していく。idxも大きくする
+      }
+    }
+  }
+}
